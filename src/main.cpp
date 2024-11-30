@@ -10,6 +10,8 @@
 #include <optional>
 #include <random>
 #include <raylib.h>
+#include <unordered_map>
+#include <chrono>
 
 // UTILS v
 
@@ -61,6 +63,7 @@ void display_result(const std::vector<std::array<uint8_t, size>>& result) {
 }
 
 // UTILS ^
+// SOCA v
 
 using SOCA_Rule = std::array<uint8_t, 16>;
 
@@ -216,56 +219,129 @@ void soca_triple_visual(const std::array<uint8_t, size>& arr_in,
   display_result(arr_out);
 }
 
+// SOCA ^
+// HUFFMAN v
+
+template<size_t size> requires (size % 8 == 0)
+constexpr double calculate_huffman_coded_size(const std::array<uint8_t, size>& arr_in) {
+  std::array<uint8_t, 256> freq {};
+
+  for (size_t i = 0; i < size / 8; i += 8) {
+    uint8_t byte = 0;
+    for (int j = 0; j < 8; ++j) {
+      byte |= arr_in[i * 8 + j] << j;
+    }
+    ++freq[byte];
+  }
+
+  double result = 0.0;
+
+  size_t max_freq = 0;
+
+  for (const auto& elem : freq) {
+    max_freq += elem;
+  }
+
+  for (size_t i = 0; i < 256; ++i) {
+    if (freq[i] != 0) {
+      result += -std::log2(static_cast<double>(freq[i]) / max_freq);
+    }
+  }
+
+  return result;
+}
+
+// HUFFMAN ^
+// MEASURE v
+
+template<size_t size>
+long long measure(const std::array<uint8_t, size>& arr, int itr) {
+  static constexpr auto rule = create_triple_rule(113);
+
+  const auto start = std::chrono::high_resolution_clock::now();
+  const auto out_m = soca_triple_forward(arr, rule, itr / 2);
+  const auto end = std::chrono::high_resolution_clock::now();
+  const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+
+  return duration;
+}
+
 int main() {
-  uint8_t rule = 0;
+  uint8_t rule = 113;
 
-  constexpr static size_t itr = 100;
+  constexpr static size_t itr = 10;
 
-  InitWindow(1000, 1000, fmt::format("SOCA Triple: {}", rule).c_str());
+  // InitWindow(1280, 1000, fmt::format("SOCA Triple: {}", rule).c_str());
+  //
+  // SetTargetFPS(120);
 
-  SetTargetFPS(120);
+  static constexpr auto input_bit_size = 2 * 1024;
 
-  const auto arr = create_array<200>();
+  const auto arr = create_array<input_bit_size>();
+
+  const auto duration = measure(arr, itr);
+
+  int min_rule = 0;
+  double min_cost = std::numeric_limits<double>::max();
 
   for (uint8_t i = 0; i < 255; ++i) {
-    auto out = soca_triple_forward(arr, create_triple_rule(i), itr);
-    auto rev = soca_triple_reverse(out, create_triple_rule(i), itr);
+    auto out = soca_triple_forward(arr, create_triple_rule(i), itr / 2);
+    auto rev = soca_triple_reverse(out, create_triple_rule(i), itr / 2);
 
-    if (verify_array(arr, rev)) {
-      fmt::println("{}, SUCCESS", i);
-    } else {
+    if (!verify_array(arr, rev)) {
       fmt::println("{}, FAILURE", i);
       rule = i;
       SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
       break;
     }
+
+    if (const auto cost = calculate_huffman_coded_size(out); cost < min_cost) {
+      min_rule = i;
+      min_cost = cost;
+    }
   }
 
-  while (!WindowShouldClose()) {
-    BeginDrawing();
+  const auto default_size = calculate_huffman_coded_size(arr);
 
-    ClearBackground(WHITE);
+  fmt::println("Compress_time: {}us, Min_rule: {}, NoCompress_cost: {}, Huffman_cost: {:.2f}, SOCAHuffman_cost: {:.2f}", duration, min_rule, input_bit_size / 8, default_size, min_cost);
 
-    if (IsKeyPressed(KEY_LEFT)) {
-      if (rule != 0) {
-        --rule;
-        SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
-      }
-    }
-
-    if (IsKeyPressed(KEY_RIGHT)) {
-      if (rule != 255) {
-        ++rule;
-        SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
-      }
-    }
-
-    soca_triple_visual(arr, create_triple_rule(rule), itr);
-
-    EndDrawing();
-  }
-
-  CloseWindow();
+  // const double huffman_coded_size_original = calculate_huffman_coded_size(arr);
+  // const double huffman_coded_size_result   = calculate_huffman_coded_size(soca_triple_forward(arr, create_triple_rule(rule), itr / 2));
+  // fmt::println("Rule = {} : Original compressed: {:.2f}, Result compressed: {:.2f}", rule, huffman_coded_size_original, huffman_coded_size_result);
+  //
+  // while (!WindowShouldClose()) {
+  //   BeginDrawing();
+  //
+  //   ClearBackground(WHITE);
+  //
+  //   if (IsKeyPressed(KEY_LEFT)) {
+  //     if (rule != 0) {
+  //       --rule;
+  //       SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
+  //     }
+  //
+  //     const double huffman_coded_size_original = calculate_huffman_coded_size(arr);
+  //     const double huffman_coded_size_result   = calculate_huffman_coded_size(soca_triple_forward(arr, create_triple_rule(rule), itr / 2));
+  //     fmt::println("Rule = {} : Original compressed: {:.2f}, Result compressed: {:.2f}", rule, huffman_coded_size_original, huffman_coded_size_result);
+  //   }
+  //
+  //   if (IsKeyPressed(KEY_RIGHT)) {
+  //     if (rule != 255) {
+  //       ++rule;
+  //       SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
+  //     }
+  //
+  //     const double huffman_coded_size_original = calculate_huffman_coded_size(arr);
+  //     const double huffman_coded_size_result   = calculate_huffman_coded_size(soca_triple_forward(arr, create_triple_rule(rule), itr / 2));
+  //     fmt::println("Rule = {} : Original compressed: {:.2f}, Result compressed: {:.2f}", rule, huffman_coded_size_original, huffman_coded_size_result);
+  //   }
+  //
+  //   soca_triple_visual(arr, create_triple_rule(rule), itr);
+  //
+  //   EndDrawing();
+  // }
+  //
+  // CloseWindow();
 
   return 0;
 }
