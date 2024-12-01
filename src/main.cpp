@@ -1,7 +1,10 @@
 #include <fmt/core.h>
+#include <unordered_map>
 
+#include <algorithm>
 #include <array>
 #include <bitset>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -9,9 +12,8 @@
 #include <limits>
 #include <optional>
 #include <random>
-#include <raylib.h>
-#include <unordered_map>
-#include <chrono>
+// #include <raylib.h>
+#include <vector>
 
 // UTILS v
 
@@ -40,27 +42,27 @@ constexpr bool verify_array(const std::array<uint8_t, size>& arr1,
   return true;
 }
 
-template<size_t size>
-void display_array(const std::array<uint8_t, size>& arr, int height_pos) {
-  int width_pos = 0;
-  for (const auto& elem : arr) {
-    if (elem == 1) {
-      DrawRectangle(width_pos, height_pos, 10, 10, BLACK);
-    }
+// template<size_t size>
+// void display_array(const std::array<uint8_t, size>& arr, int height_pos) {
+//   int width_pos = 0;
+//   for (const auto& elem : arr) {
+//     if (elem == 1) {
+//       DrawRectangle(width_pos, height_pos, 10, 10, BLACK);
+//     }
+//
+//     width_pos += 10;
+//   }
+// }
 
-    width_pos += 10;
-  }
-}
-
-template<size_t size>
-void display_result(const std::vector<std::array<uint8_t, size>>& result) {
-  int height_pos = 0;
-
-  for (const auto& elem : result) {
-    display_array(elem, height_pos);
-    height_pos += 10;
-  }
-}
+// template<size_t size>
+// void display_result(const std::vector<std::array<uint8_t, size>>& result) {
+//   int height_pos = 0;
+//
+//   for (const auto& elem : result) {
+//     display_array(elem, height_pos);
+//     height_pos += 10;
+//   }
+// }
 
 // UTILS ^
 // SOCA v
@@ -236,20 +238,28 @@ constexpr double calculate_huffman_coded_size(const std::array<uint8_t, size>& a
 
   double result = 0.0;
 
-  size_t max_freq = 0;
-
-  for (const auto& elem : freq) {
-    max_freq += elem;
-  }
-
   for (size_t i = 0; i < 256; ++i) {
     if (freq[i] != 0) {
-      result += -std::log2(static_cast<double>(freq[i]) / max_freq);
+      result += -std::log2(static_cast<double>(freq[i]) / 256);
     }
   }
 
   return result;
 }
+
+struct HuffmanResult {
+  std::vector<uint8_t> data;
+  std::vector<uint8_t> codes;
+};
+
+struct FrequencyPair {
+  uint8_t byte;
+  size_t  freq;
+};
+
+// std::vector<FrequencyPair> get_frequences() {
+//
+// }
 
 // HUFFMAN ^
 // MEASURE v
@@ -269,7 +279,7 @@ long long measure(const std::array<uint8_t, size>& arr, int itr) {
 int main() {
   uint8_t rule = 113;
 
-  constexpr static size_t itr = 10;
+  constexpr static size_t itr = 12;
 
   // InitWindow(1280, 1000, fmt::format("SOCA Triple: {}", rule).c_str());
   //
@@ -285,13 +295,13 @@ int main() {
   double min_cost = std::numeric_limits<double>::max();
 
   for (uint8_t i = 0; i < 255; ++i) {
-    auto out = soca_triple_forward(arr, create_triple_rule(i), itr / 2);
-    auto rev = soca_triple_reverse(out, create_triple_rule(i), itr / 2);
+    auto out = soca_triple_reverse(arr, create_triple_rule(i), itr / 2);
+    auto rev = soca_triple_forward(out, create_triple_rule(i), itr / 2);
 
     if (!verify_array(arr, rev)) {
       fmt::println("{}, FAILURE", i);
       rule = i;
-      SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
+      // SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
       break;
     }
 
