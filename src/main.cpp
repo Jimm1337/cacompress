@@ -1,5 +1,4 @@
 #include <fmt/core.h>
-#include <unordered_map>
 
 #include <algorithm>
 #include <array>
@@ -8,12 +7,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <fstream>
-#include <limits>
-#include <optional>
 #include <random>
-// #include <raylib.h>
 #include <vector>
+#include <raylib.h>
+#include "SOCA.hpp"
 
 // UTILS v
 
@@ -22,7 +19,7 @@ constexpr std::array<uint8_t, size> create_array() {
   std::array<uint8_t, size> arr {};
 
   std::mt19937                  gen {std::random_device {}()};
-  std::uniform_int_distribution dist {0, 1};
+  std::uniform_int_distribution dist {0, 255};
 
   for (size_t i = 0; i < size; ++i) {
     arr[i] = static_cast<uint8_t>(dist(gen));
@@ -42,27 +39,61 @@ constexpr bool verify_array(const std::array<uint8_t, size>& arr1,
   return true;
 }
 
-// template<size_t size>
-// void display_array(const std::array<uint8_t, size>& arr, int height_pos) {
-//   int width_pos = 0;
-//   for (const auto& elem : arr) {
-//     if (elem == 1) {
-//       DrawRectangle(width_pos, height_pos, 10, 10, BLACK);
-//     }
-//
-//     width_pos += 10;
-//   }
-// }
+template<size_t size>
+void display_array(const std::array<uint8_t, size>& arr, int height_pos) {
+  int width_pos = 0;
+  for (const auto& elem : arr) {
+    if (elem & 1) {
+      DrawRectangle(width_pos, height_pos, 10, 10, BLACK);
+    }
+    width_pos += 10;
 
-// template<size_t size>
-// void display_result(const std::vector<std::array<uint8_t, size>>& result) {
-//   int height_pos = 0;
-//
-//   for (const auto& elem : result) {
-//     display_array(elem, height_pos);
-//     height_pos += 10;
-//   }
-// }
+    if (elem & 2) {
+      DrawRectangle(width_pos, height_pos, 10, 10, BLACK);
+    }
+    width_pos += 10;
+
+    if (elem & 4) {
+      DrawRectangle(width_pos, height_pos, 10, 10, BLACK);
+    }
+    width_pos += 10;
+
+    if (elem & 8) {
+      DrawRectangle(width_pos, height_pos, 10, 10, BLACK);
+    }
+    width_pos += 10;
+
+    if (elem & 16) {
+      DrawRectangle(width_pos, height_pos, 10, 10, BLACK);
+    }
+    width_pos += 10;
+
+    if (elem & 32) {
+      DrawRectangle(width_pos, height_pos, 10, 10, BLACK);
+    }
+    width_pos += 10;
+
+    if (elem & 64) {
+      DrawRectangle(width_pos, height_pos, 10, 10, BLACK);
+    }
+    width_pos += 10;
+
+    if (elem & 128) {
+      DrawRectangle(width_pos, height_pos, 10, 10, BLACK);
+    }
+    width_pos += 10;
+  }
+}
+
+template<size_t size>
+void display_result(const std::vector<std::array<uint8_t, size>>& result) {
+  int height_pos = 0;
+
+  for (const auto& elem : result) {
+    display_array(elem, height_pos);
+    height_pos += 10;
+  }
+}
 
 // UTILS ^
 // SOCA v
@@ -221,6 +252,34 @@ void soca_triple_visual(const std::array<uint8_t, size>& arr_in,
   display_result(arr_out);
 }
 
+template<size_t size>
+void soca_2itr_visual(std::array<uint8_t, size> arr, uint8_t rule, int itr) {
+  int height_pos = 0;
+  for (int i = 0; i < itr / 2; ++i) {
+    std::array<uint8_t, size / 2> arr_older {};
+    std::array<uint8_t, size / 2> arr_newer {};
+    std::copy(arr.begin(), arr.begin() + size / 2, arr_older.begin());
+    std::copy(arr.begin() + size / 2, arr.end(), arr_newer.begin());
+    display_array(arr_older, height_pos);
+    height_pos += 10;
+    display_array(arr_newer, height_pos);
+    height_pos += 10;
+    arr = soca_2itr_forward_for_testing(std::move(arr), rule);
+  }
+
+  for (int i = itr / 2; i < itr; ++i) {
+    arr = soca_2itr_reverse_for_testing(std::move(arr), rule);
+    std::array<uint8_t, size / 2> arr_older {};
+    std::array<uint8_t, size / 2> arr_newer {};
+    std::copy(arr.begin(), arr.begin() + size / 2, arr_older.begin());
+    std::copy(arr.begin() + size / 2, arr.end(), arr_newer.begin());
+    display_array(arr_newer, height_pos);
+    height_pos += 10;
+    display_array(arr_older, height_pos);
+    height_pos += 10;
+  }
+}
+
 // SOCA ^
 // HUFFMAN v
 
@@ -265,11 +324,11 @@ struct FrequencyPair {
 // MEASURE v
 
 template<size_t size>
-long long measure(const std::array<uint8_t, size>& arr, int itr) {
-  static constexpr auto rule = create_triple_rule(113);
-
+long long measure(std::array<uint8_t, size> arr, int itr) {
   const auto start = std::chrono::high_resolution_clock::now();
-  const auto out_m = soca_triple_forward(arr, rule, itr / 2);
+  for (int i = 0; i < itr; ++i) {
+    arr = soca_2itr_forward<113>(std::move(arr));
+  }
   const auto end = std::chrono::high_resolution_clock::now();
   const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
@@ -277,81 +336,65 @@ long long measure(const std::array<uint8_t, size>& arr, int itr) {
 }
 
 int main() {
-  uint8_t rule = 113;
+  constexpr static size_t itr = 50;
 
-  constexpr static size_t itr = 12;
+  InitWindow(1280, 1000, "SOCA Triple: 0");
 
-  // InitWindow(1280, 1000, fmt::format("SOCA Triple: {}", rule).c_str());
-  //
-  // SetTargetFPS(120);
+  SetTargetFPS(120);
 
-  static constexpr auto input_bit_size = 2 * 1024;
+  static constexpr auto input_byte_size = 256 / 8;
 
-  const auto arr = create_array<input_bit_size>();
+  const auto arr = create_array<input_byte_size>();
 
   const auto duration = measure(arr, itr);
 
-  int min_rule = 0;
-  double min_cost = std::numeric_limits<double>::max();
-
   for (uint8_t i = 0; i < 255; ++i) {
-    auto out = soca_triple_reverse(arr, create_triple_rule(i), itr / 2);
-    auto rev = soca_triple_forward(out, create_triple_rule(i), itr / 2);
+    auto out = arr;
+    for (int j = 0; j < itr; ++j) {
+      out = soca_2itr_forward_for_testing(std::move(out), i);
+    }
+
+    auto rev = out;
+    for (int j = 0; j < itr; ++j) {
+      rev = soca_2itr_reverse_for_testing(std::move(rev), i);
+    }
 
     if (!verify_array(arr, rev)) {
       fmt::println("{}, FAILURE", i);
-      rule = i;
-      // SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
-      break;
-    }
-
-    if (const auto cost = calculate_huffman_coded_size(out); cost < min_cost) {
-      min_rule = i;
-      min_cost = cost;
+    } else {
+      fmt::println("{}, SUCCESS", i);
     }
   }
 
-  const auto default_size = calculate_huffman_coded_size(arr);
+  fmt::println("SOCA_time: {}us", duration);
 
-  fmt::println("Compress_time: {}us, Min_rule: {}, NoCompress_cost: {}, Huffman_cost: {:.2f}, SOCAHuffman_cost: {:.2f}", duration, min_rule, input_bit_size / 8, default_size, min_cost);
+  uint8_t rule = 0;
 
-  // const double huffman_coded_size_original = calculate_huffman_coded_size(arr);
-  // const double huffman_coded_size_result   = calculate_huffman_coded_size(soca_triple_forward(arr, create_triple_rule(rule), itr / 2));
-  // fmt::println("Rule = {} : Original compressed: {:.2f}, Result compressed: {:.2f}", rule, huffman_coded_size_original, huffman_coded_size_result);
-  //
-  // while (!WindowShouldClose()) {
-  //   BeginDrawing();
-  //
-  //   ClearBackground(WHITE);
-  //
-  //   if (IsKeyPressed(KEY_LEFT)) {
-  //     if (rule != 0) {
-  //       --rule;
-  //       SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
-  //     }
-  //
-  //     const double huffman_coded_size_original = calculate_huffman_coded_size(arr);
-  //     const double huffman_coded_size_result   = calculate_huffman_coded_size(soca_triple_forward(arr, create_triple_rule(rule), itr / 2));
-  //     fmt::println("Rule = {} : Original compressed: {:.2f}, Result compressed: {:.2f}", rule, huffman_coded_size_original, huffman_coded_size_result);
-  //   }
-  //
-  //   if (IsKeyPressed(KEY_RIGHT)) {
-  //     if (rule != 255) {
-  //       ++rule;
-  //       SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
-  //     }
-  //
-  //     const double huffman_coded_size_original = calculate_huffman_coded_size(arr);
-  //     const double huffman_coded_size_result   = calculate_huffman_coded_size(soca_triple_forward(arr, create_triple_rule(rule), itr / 2));
-  //     fmt::println("Rule = {} : Original compressed: {:.2f}, Result compressed: {:.2f}", rule, huffman_coded_size_original, huffman_coded_size_result);
-  //   }
-  //
-  //   soca_triple_visual(arr, create_triple_rule(rule), itr);
-  //
-  //   EndDrawing();
-  // }
-  //
-  // CloseWindow();
+  while (!WindowShouldClose()) {
+    BeginDrawing();
+
+    ClearBackground(WHITE);
+
+    if (IsKeyPressed(KEY_LEFT)) {
+      if (rule != 0) {
+        --rule;
+        SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
+      }
+    }
+
+    if (IsKeyPressed(KEY_RIGHT)) {
+      if (rule != 255) {
+        ++rule;
+        SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
+      }
+    }
+
+    soca_2itr_visual(arr, rule, itr);
+
+    EndDrawing();
+  }
+
+  CloseWindow();
 
   return 0;
 }
