@@ -101,11 +101,11 @@ void soca_2itr_visual(std::array<uint8_t, size> arr, uint8_t rule, int itr) {
     height_pos += 10;
     display_array(arr_newer, height_pos);
     height_pos += 10;
-    arr = soca_2itr_forward_for_testing(std::move(arr), rule);
+    soca::forward(arr.begin(), arr.end(), rule);
   }
 
   for (int i = itr / 2; i < itr; ++i) {
-    arr = soca_2itr_reverse_for_testing(std::move(arr), rule);
+    soca::reverse(arr.begin(), arr.end(), rule);
     std::array<uint8_t, size / 2> arr_older {};
     std::array<uint8_t, size / 2> arr_newer {};
     std::copy(arr.begin(), arr.begin() + size / 2, arr_older.begin());
@@ -164,7 +164,7 @@ template<size_t size>
 long long measure(std::array<uint8_t, size> arr, int itr) {
   const auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < itr; ++i) {
-    arr = soca_2itr_forward<113>(std::move(arr));
+    soca::forward<113>(arr.begin(), arr.end());
   }
   const auto end = std::chrono::high_resolution_clock::now();
   const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
@@ -188,12 +188,12 @@ int main() {
   for (uint8_t i = 0; i < 255; ++i) {
     auto out = arr;
     for (int j = 0; j < itr; ++j) {
-      out = soca_2itr_forward_for_testing(std::move(out), i);
+      soca::forward(out.begin(), out.end(), i);
     }
 
     auto rev = out;
     for (int j = 0; j < itr; ++j) {
-      rev = soca_2itr_reverse_for_testing(std::move(rev), i);
+      soca::reverse(rev.begin(), rev.end(), i);
     }
 
     if (!verify_array(arr, rev)) {
