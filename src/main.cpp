@@ -11,7 +11,7 @@
 #include <vector>
 #include <raylib.h>
 #include "SOCA.hpp"
-#include "CUT.hpp"
+#include "HUFFMAN.hpp"
 
 // UTILS v
 
@@ -183,25 +183,25 @@ int main() {
 
   const auto arr = create_array<input_byte_size>();
 
-  const auto duration = measure(arr, itr);
+  const auto duration = measure(create_array<128 * 1024>(), 3);
 
-  for (uint8_t i = 0; i < 255; ++i) {
-    auto out = arr;
-    for (int j = 0; j < itr; ++j) {
-      soca::forward(out.begin(), out.end(), i);
-    }
-
-    auto rev = out;
-    for (int j = 0; j < itr; ++j) {
-      soca::reverse(rev.begin(), rev.end(), i);
-    }
-
-    if (!verify_array(arr, rev)) {
-      fmt::println("{}, FAILURE", i);
-    } else {
-      fmt::println("{}, SUCCESS", i);
-    }
-  }
+  // for (uint8_t i = 0; i < 255; ++i) {
+  //   auto out = arr;
+  //   for (int j = 0; j < itr; ++j) {
+  //     soca::forward(out.begin(), out.end(), i);
+  //   }
+  //
+  //   auto rev = out;
+  //   for (int j = 0; j < itr; ++j) {
+  //     soca::reverse(rev.begin(), rev.end(), i);
+  //   }
+  //
+  //   if (!verify_array(arr, rev)) {
+  //     fmt::println("{}, FAILURE", i);
+  //   } else {
+  //     fmt::println("{}, SUCCESS", i);
+  //   }
+  // }
 
   fmt::println("SOCA_time: {}us", duration);
 

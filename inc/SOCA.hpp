@@ -2,6 +2,8 @@
 
 #include <type_traits>
 #include <iterator>
+#include <cstddef>
+#include <cstdint>
 
 namespace soca {
 
