@@ -185,23 +185,15 @@ int main() {
 
   const auto duration = measure(create_array<128 * 1024>(), 3);
 
-  // for (uint8_t i = 0; i < 255; ++i) {
-  //   auto out = arr;
-  //   for (int j = 0; j < itr; ++j) {
-  //     soca::forward(out.begin(), out.end(), i);
-  //   }
-  //
-  //   auto rev = out;
-  //   for (int j = 0; j < itr; ++j) {
-  //     soca::reverse(rev.begin(), rev.end(), i);
-  //   }
-  //
-  //   if (!verify_array(arr, rev)) {
-  //     fmt::println("{}, FAILURE", i);
-  //   } else {
-  //     fmt::println("{}, SUCCESS", i);
-  //   }
-  // }
+  const auto huffman_arr = create_array<16 * 1024>();
+  const auto huffman_compressed = huffman::encode(huffman_arr.begin(), huffman_arr.end());
+  const auto huffman_decompressed = huffman::decode(huffman_compressed.begin(), huffman_compressed.end());
+
+  if (huffman_decompressed.size() != huffman_arr.size()) {
+    fmt::println("Huffman decompression failed");
+  } else {
+    fmt::println("Huffman decompression success");
+  }
 
   fmt::println("SOCA_time: {}us", duration);
 
