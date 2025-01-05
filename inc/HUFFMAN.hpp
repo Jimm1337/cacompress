@@ -1,36 +1,22 @@
 #pragma once
 
-#include <initializer_list>
-#include <type_traits>
-
-#include <algorithm>
-#include <array>
+#include <bitset>
 #include <compare>
 #include <cstddef>
 #include <cstdint>
-#include <iterator>
 #include <optional>
+#include <queue>
 #include <ranges>
 #include <stack>
-#include <tuple>
 #include <vector>
 
 namespace impl::huffman {
 
 struct code {
-  std::bitset<8> bits;
-  uint8_t        count;
+  std::bitset<256> bits; // corner case for max code length is 255
+  uint8_t          count;
 
   using hash = unsigned long;
-
-  [[nodiscard]] hash hashed() const {
-    return bits.to_ulong() | (static_cast<hash>(count) << 8);
-  }
-
-  [[nodiscard]] static constexpr code from_hash(hash hash) {
-    return {.bits  = {static_cast<uint8_t>(hash & 0xFF)},
-            .count = static_cast<uint8_t>(hash >> 8)};
-  }
 };
 
 using byte = std::optional<uint8_t>;
@@ -61,7 +47,7 @@ public:
 
   constexpr void write_code(code code) {
     for (int bit = code.count - 1; bit >= 0; --bit) {
-      if (code.bits.test(bit) == 1) {
+      if (code.bits.test(bit)) {
         write_bit<1>();
       } else {
         write_bit<0>();
@@ -72,7 +58,7 @@ public:
   constexpr void write_byte(uint8_t byte) {
     const std::bitset<8> bits {byte};
     for (int bit = 7; bit >= 0; --bit) {
-      if (bits.test(bit) == 1) {
+      if (bits.test(bit)) {
         write_bit<1>();
       } else {
         write_bit<0>();
@@ -136,12 +122,6 @@ struct huffman_node {
   }
 };
 
-struct encode_stack_node {
-  huffman_node* node;
-  code          code;
-  bool          right;
-};
-
 struct huffman_decode_node {
   byte byte;
   code code;
@@ -156,12 +136,12 @@ requires std::is_same_v<typename Itr::value_type, uint8_t> &&
          std::random_access_iterator<Itr>
 std::vector<uint8_t> encode(Itr begin, Itr end) {
   std::array<impl::huffman::huffman_node, 256 * 2>
-  tree;    // size is num of huffman nodes for max symbols
+  tree;    // size is num of huffman nodes for max symbols, this holds lifetimes of nodes
 
   const auto tree_begin = tree.begin();
   auto       tree_end   = tree.begin();
 
-  // make tree w/ leaf nodes
+  // make leaf nodes
   std::array<std::optional<uint16_t>, 256> cache_idx {};
   for (auto itr = begin; itr != end; ++itr) {
     const uint8_t byte = *itr;
@@ -181,7 +161,7 @@ std::vector<uint8_t> encode(Itr begin, Itr end) {
     }
   }
 
-  // make tree w/ intermediate nodes (no codes yet)
+  // make intermediate nodes (no codes yet)
   std::make_heap(tree_begin, tree_end, std::greater {});
   auto park_itr = tree.rbegin();
   while (std::distance(tree_begin, tree_end) > 1) {
@@ -210,29 +190,42 @@ std::vector<uint8_t> encode(Itr begin, Itr end) {
 
   std::array<impl::huffman::code, 256> codes_by_byte {};
 
-  // codes -> left is 0, right is 1, Tree output -> 0 is not leaf, 1 + byte is leaf
-  std::stack<impl::huffman::encode_stack_node> dfs_stack {{{
-    .node  = std::to_address(tree_begin),
-    .code  = {.bits = {0}, .count = 0},
-    .right = false,
-  }}};    // start at root
-  while (!dfs_stack.empty()) {
-    auto node = dfs_stack.top();
-    dfs_stack.pop();
-    node.node->code.bits  = node.code.bits << 1;
-    node.node->code.count = node.code.count + 1;
-    node.node->code.bits.set(0, node.right);
+  if (tree_begin->byte.has_value()) {    // corner case for single byte repeated
+    codes_by_byte[tree_begin->byte.value()] = {.bits  = {1},
+                                               .count = 1};    // 1 bit code
+    writer.write_bit<1>();
+    writer.write_byte(tree_begin->byte.value());
+  } else {
+    // codes -> left is 0, right is 1, Tree output -> 0 is not leaf, 1 + byte is leaf, push left first
+    std::stack<impl::huffman::huffman_node*> dfs_stack {
+      {std::to_address(tree_begin)}};    // start at root
+    while (!dfs_stack.empty()) {
+      auto node = dfs_stack.top();
+      dfs_stack.pop();
 
-    if (!node.node->byte.has_value()) {
-      dfs_stack.push(
-      {.node = node.node->right, .code = node.node->code, .right = true});
-      dfs_stack.push(
-      {.node = node.node->left, .code = node.node->code, .right = false});
-      writer.write_bit<0>();    // 0 means not a leaf
-    } else {
-      codes_by_byte[node.node->byte.value()] = node.node->code;
-      writer.write_bit<1>();    // 1 and byte means leaf
-      writer.write_byte(node.node->byte.value());
+      if (node->byte.has_value()) {
+        writer.write_bit<1>();
+        writer.write_byte(node->byte.value());
+        codes_by_byte[node->byte.value()] = node->code;
+      } else {
+        writer.write_bit<0>();
+
+        if (node->left != nullptr) {
+          node->left->code        = node->code;
+          node->left->code.bits <<= 1;
+          node->left->code.bits.set(0, false);
+          node->left->code.count += 1;
+          dfs_stack.push(node->left);
+        }
+
+        if (node->right != nullptr) {
+          node->right->code        = node->code;
+          node->right->code.bits <<= 1;
+          node->right->code.bits.set(0, true);
+          node->right->code.count += 1;
+          dfs_stack.push(node->right);
+        }
+      }
     }
   }
 
@@ -243,11 +236,8 @@ std::vector<uint8_t> encode(Itr begin, Itr end) {
 
   // Pad bits output
   const uint8_t pad_bits = 8 - writer.count_bits_in_buffer();
-
-  if (pad_bits != 8) {
-    compressed[0] = pad_bits;
-    writer.flush();
-  }
+  compressed[0]          = pad_bits;
+  writer.flush();
 
   return compressed;
 }
@@ -256,67 +246,69 @@ template<typename Itr>
 requires std::is_same_v<typename Itr::value_type, uint8_t> &&
          std::random_access_iterator<Itr>
 std::vector<uint8_t> decode(Itr begin, Itr end) {
-  const size_t bits_to_read = (std::distance(begin + 1, end) * 8) - *begin;
-  impl::huffman::bit_reader reader {begin + 1};
-  size_t                    bits_read = 0;
+  // const size_t bits_to_read = (std::distance(begin + 1, end) * 8) - *begin;
+  // impl::huffman::bit_reader reader {begin + 1};
+  // size_t                    bits_read = 0;
+  //
+  // // reading routine for tree
+  // const auto read_node = [&reader, &bits_read](impl::huffman::code prev_code,
+  //                                              bool                right) {
+  //   const impl::huffman::code new_code = [&prev_code, right] {
+  //     auto new_code_ = prev_code.bits << 1;
+  //     return impl::huffman::code {
+  //       .bits  = right ? new_code_.set(0, true) : new_code_,
+  //       .count = static_cast<uint8_t>(prev_code.count + 1)};
+  //   }();
+  //
+  //   if (reader.read_bit() == 0) {
+  //     ++bits_read;
+  //     return impl::huffman::huffman_decode_node {.byte = std::nullopt,
+  //                                                .code = new_code};
+  //   }
+  //
+  //   bits_read += 9;
+  //   return impl::huffman::huffman_decode_node {.byte = reader.read_byte(),
+  //                                              .code = new_code};
+  // };
+  //
+  // // get bytes by code (have to hash whole or else there could be conflicts with leading 0s)
+  // std::array<impl::huffman::byte, 4096>
+  // bytes_by_hashed_code {};    // size is max of hashed code (8 + 4) bits
+  // std::stack<impl::huffman::huffman_decode_node> decode_stack {
+  //   {read_node({.bits = {0}, .count = 1}, false)}};
+  // while (!decode_stack.empty()) {
+  //   const auto [byte, code] = decode_stack.top();
+  //   decode_stack.pop();
+  //
+  //   if (byte.has_value()) {
+  //     bytes_by_hashed_code[code.hashed()] = byte;
+  //   } else {
+  //     decode_stack.push(read_node(code, false));
+  //     decode_stack.push(read_node(code, true));
+  //   }
+  // }
+  //
+  // // read msg
+  // std::vector<uint8_t> decompressed_msg;
+  // decompressed_msg.reserve(std::distance(begin, end));
+  //
+  // while (bits_read <= bits_to_read) {
+  //   impl::huffman::code code {.bits = reader.read_bit(), .count = 1};
+  //   ++bits_read;
+  //
+  //   while (bytes_by_hashed_code[code.hashed()] == std::nullopt) {
+  //     code.bits <<= 1;
+  //     code.bits.set(0, reader.read_bit() == 1);
+  //     ++code.count;
+  //     ++bits_read;
+  //   }
+  //
+  //   decompressed_msg.emplace_back(bytes_by_hashed_code[code.hashed()].value());
+  // }
+  //
+  // return decompressed_msg;
 
-  // reading routine for tree
-  const auto read_node = [&reader, &bits_read](impl::huffman::code prev_code,
-                                               bool                right) {
-    const impl::huffman::code new_code = [&prev_code, right] {
-      auto new_code_ = prev_code.bits << 1;
-      return impl::huffman::code {
-        .bits  = right ? new_code_.set(0, true) : new_code_,
-        .count = static_cast<uint8_t>(prev_code.count + 1)};
-    }();
-
-    if (reader.read_bit() == 0) {
-      ++bits_read;
-      return impl::huffman::huffman_decode_node {.byte = std::nullopt,
-                                                 .code = new_code};
-    }
-
-    bits_read += 9;
-    return impl::huffman::huffman_decode_node {.byte = reader.read_byte(),
-                                               .code = new_code};
-  };
-
-  // get bytes by code (have to hash whole or else there could be conflicts with leading 0s)
-  std::array<impl::huffman::byte, 4096>
-  bytes_by_hashed_code {};    // size is max of hashed code (8 + 4) bits
-  std::stack<impl::huffman::huffman_decode_node> decode_stack {
-    {read_node({.bits = {0}, .count = 1}, false)}};
-  while (!decode_stack.empty()) {
-    const auto [byte, code] = decode_stack.top();
-    decode_stack.pop();
-
-    if (byte.has_value()) {
-      bytes_by_hashed_code[code.hashed()] = byte;
-    } else {
-      decode_stack.push(read_node(code, false));
-      decode_stack.push(read_node(code, true));
-    }
-  }
-
-  // read msg
-  std::vector<uint8_t> decompressed_msg;
-  decompressed_msg.reserve(std::distance(begin, end));
-
-  while (bits_read <= bits_to_read) {
-    impl::huffman::code code {.bits = reader.read_bit(), .count = 1};
-    ++bits_read;
-
-    while (bytes_by_hashed_code[code.hashed()] == std::nullopt) {
-      code.bits <<= 1;
-      code.bits.set(0, reader.read_bit() == 1);
-      ++code.count;
-      ++bits_read;
-    }
-
-    decompressed_msg.emplace_back(bytes_by_hashed_code[code.hashed()].value());
-  }
-
-  return decompressed_msg;
+  return {};
 }
 
 }    // namespace huffman

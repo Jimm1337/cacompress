@@ -185,7 +185,7 @@ int main() {
   //
   // const auto duration = measure(create_array<8 * 1024>(), 3); // 100MB in 1s - 8k, 3itr
 
-  const auto huffman_arr = create_array<1 * 1024>();
+  const auto huffman_arr = create_array<16 * 1024>();
   const auto huffman_compressed = huffman::encode(huffman_arr.begin(), huffman_arr.end());
   const auto huffman_decompressed = huffman::decode(huffman_compressed.begin(), huffman_compressed.end());
 
