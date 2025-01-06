@@ -1,3 +1,5 @@
+#include "HUFFMAN.hpp"
+#include "SOCA.hpp"
 #include <fmt/core.h>
 
 #include <algorithm>
@@ -8,10 +10,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <random>
-#include <vector>
 #include <raylib.h>
-#include "SOCA.hpp"
-#include "HUFFMAN.hpp"
+#include <vector>
 
 // UTILS v
 
@@ -29,14 +29,19 @@ constexpr std::array<uint8_t, size> create_array() {
   return arr;
 }
 
-template<size_t size>
-constexpr bool verify_array(const std::array<uint8_t, size>& arr1,
-                            const std::array<uint8_t, size>& arr2) {
-  for (size_t i = 0; i < size; ++i) {
-    if (arr1[i] != arr2[i]) {
+bool verify_array(const auto& arr1, const auto& arr2) {
+  if (arr1.size() != arr2.size()) {
+    return false;
+  }
+
+  auto itr2 = arr2.begin();
+  for (const auto& elem : arr1) {
+    if (elem != *itr2) {
       return false;
     }
+    ++itr2;
   }
+
   return true;
 }
 
@@ -120,8 +125,10 @@ void soca_2itr_visual(std::array<uint8_t, size> arr, uint8_t rule, int itr) {
 // SOCA ^
 // HUFFMAN v
 
-template<size_t size> requires (size % 8 == 0)
-constexpr double calculate_huffman_coded_size(const std::array<uint8_t, size>& arr_in) {
+template<size_t size>
+requires(size % 8 == 0)
+constexpr double calculate_huffman_coded_size(
+const std::array<uint8_t, size>& arr_in) {
   std::array<uint8_t, 256> freq {};
 
   for (size_t i = 0; i < size / 8; i += 8) {
@@ -167,7 +174,8 @@ long long measure(std::array<uint8_t, size> arr, int itr) {
     soca::forward<113>(arr.begin(), arr.end());
   }
   const auto end = std::chrono::high_resolution_clock::now();
-  const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+  const auto duration =
+  std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
   return duration;
 }
@@ -185,15 +193,25 @@ int main() {
   //
   // const auto duration = measure(create_array<8 * 1024>(), 3); // 100MB in 1s - 8k, 3itr
 
-  const auto huffman_arr = create_array<16 * 1024>();
-  const auto huffman_compressed = huffman::encode(huffman_arr.begin(), huffman_arr.end());
-  const auto huffman_decompressed = huffman::decode(huffman_compressed.begin(), huffman_compressed.end());
+  const auto           huffman_arr = create_array<32 * 1024>();
+  std::vector<uint8_t> huffman_compressed {};
+  std::vector<uint8_t> huffman_decompressed {};
+  huffman::encode(huffman_arr.begin(),
+                  huffman_arr.end(),
+                  std::back_inserter(huffman_compressed));
+  huffman::decode(huffman_compressed.begin(),
+                  huffman_compressed.end(),
+                  std::back_inserter(huffman_decompressed));
 
-  if (huffman_decompressed.size() != huffman_arr.size()) {
-    fmt::println("Huffman decompression failed: {} vs {}", huffman_decompressed.size(), huffman_arr.size());
+  if (!verify_array(huffman_arr, huffman_decompressed)) {
+    fmt::println("Huffman decompression failed");
   } else {
     fmt::println("Huffman decompression success");
   }
+
+  fmt::println("Original size: {}", huffman_arr.size());
+  fmt::println("Compressed size: {}", huffman_compressed.size());
+  fmt::println("Decompressed size: {}", huffman_decompressed.size());
 
   // fmt::println("SOCA_time: {}us", duration);
   //

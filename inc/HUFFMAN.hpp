@@ -91,12 +91,14 @@ public:
   }
 
   constexpr uint8_t read_bit() {
+    const uint8_t bit = ((*input_iterator >> (7 - count++)) & 1);
+
     if (count == 8) {
       count = 0;
       ++input_iterator;
     }
 
-    return ((*input_iterator >> (7 - count++)) & 1);
+    return bit;
   }
 
   constexpr uint8_t read_byte() {
@@ -108,6 +110,10 @@ public:
 
     return result;
   }
+
+  constexpr Itr get_iterator() const {
+    return input_iterator;
+  }
 };
 
 struct huffman_node {
@@ -115,7 +121,6 @@ struct huffman_node {
   huffman_node* left;
   huffman_node* right;
   byte          byte;
-  code          code;
 
   constexpr std::weak_ordering operator<=>(const huffman_node& other) const {
     return frequency <=> other.frequency;
@@ -128,14 +133,59 @@ struct huffman_decode_node {
   byte                 byte;
 };
 
+void encode_node(huffman_node* node, auto& writer, auto& table, code code) {
+  if (node->byte.has_value()) {
+    writer.template write_bit<1>();
+    writer.write_byte(node->byte.value());
+    table[node->byte.value()] = code;
+  } else {
+    writer.template write_bit<0>();
+
+    encode_node(node->left,
+                writer,
+                table,
+                huffman::code {.bits  = code.bits << 1,
+                               .count = static_cast<uint8_t>(code.count + 1)});
+
+    encode_node(node->right,
+                writer,
+                table,
+                huffman::code {.bits = code.bits << 1 |= 1,
+                               .count = static_cast<uint8_t>(code.count + 1)});
+  }
+}
+
+huffman_decode_node* decode_node(auto& itr, auto& reader) {
+  if (reader.read_bit() == 1) {
+    *itr++ = huffman_decode_node {.left  = nullptr,
+                                  .right = nullptr,
+                                  .byte  = reader.read_byte()};
+
+    return std::to_address(itr - 1);
+  }
+
+  huffman_decode_node* left   = decode_node(itr, reader);
+  huffman_decode_node* right  = decode_node(itr, reader);
+
+  *itr++ =
+  huffman_decode_node {.left = left, .right = right, .byte = std::nullopt};
+
+  return std::to_address(itr - 1);
+}
+
 }    // namespace impl::huffman
 
 namespace huffman {
 
-template<typename Itr>
-requires std::is_same_v<typename Itr::value_type, uint8_t> &&
-         std::random_access_iterator<Itr>
-std::vector<uint8_t> encode(Itr begin, Itr end) {
+template<typename ItrIn, typename ItrOut>
+requires((std::forward_iterator<ItrIn> &&
+          std::is_same_v<typename ItrIn::value_type, uint8_t>) ||
+         std::is_same_v<std::remove_cvref_t<std::remove_pointer_t<ItrIn>>,
+                        uint8_t>) &&
+        (std::output_iterator<ItrOut, uint8_t> ||
+         std::is_same_v<std::remove_cvref_t<std::remove_pointer_t<ItrOut>>,
+                        uint8_t>)
+void encode(ItrIn begin, ItrIn end, ItrOut out) {
   std::array<impl::huffman::huffman_node, 256 * 2 - 1>
   tree;    // size is num of huffman nodes for max symbols, this holds lifetimes of nodes
 
@@ -150,19 +200,16 @@ std::vector<uint8_t> encode(Itr begin, Itr end) {
     if (!cache_idx[byte].has_value()) {
       cache_idx[byte] =
       static_cast<int16_t>(std::distance(tree.begin(), tree_end));
-      *tree_end++ = {
-        .frequency = 1,
-        .left      = nullptr,
-        .right     = nullptr,
-        .byte      = byte,
-        .code      = impl::huffman::code {.bits = {0}, .count = 0}
-      };
+      *tree_end++ = {.frequency = 1,
+                     .left      = nullptr,
+                     .right     = nullptr,
+                     .byte      = byte};
     } else {
       ++tree[*cache_idx[byte]].frequency;
     }
   }
 
-  // make intermediate nodes (no codes yet)
+  // make intermediate nodes
   std::make_heap(tree_begin, tree_end, std::greater {});
   auto park_itr = tree.rbegin();
   while (std::distance(tree_begin, tree_end) > 1) {
@@ -174,57 +221,29 @@ std::vector<uint8_t> encode(Itr begin, Itr end) {
       .frequency = (park_itr - 2)->frequency + (park_itr - 1)->frequency,
       .left      = std::to_address(park_itr - 2),
       .right     = std::to_address(park_itr - 1),
-      .byte      = std::nullopt,
-      .code      = impl::huffman::code {.bits = {0}, .count = 0}
-    };
+      .byte      = std::nullopt};
     std::push_heap(tree_begin, tree_end, std::greater {});
   }
 
   // Output format:
-  // uint8_t pad_bits count -> (bits) tree -> (bits) msg -> (pad bits)
+  // (bits) tree -> (bits) msg -> (pad bits)
 
-  std::vector<uint8_t> compressed;
-  compressed.reserve(std::distance(begin, end));
-  compressed.emplace_back(static_cast<uint8_t>(0));    // pad bits
-
-  impl::huffman::bit_writer writer {std::back_inserter(compressed)};
+  impl::huffman::bit_writer writer {out};
 
   std::array<impl::huffman::code, 256> codes_by_byte {};
 
   if (tree_begin->byte.has_value()) {    // corner case for single byte repeated
     codes_by_byte[tree_begin->byte.value()] = {.bits  = {1},
                                                .count = 1};    // 1 bit code
-    writer.write_bit<1>();
+    writer.template write_bit<1>();
     writer.write_byte(tree_begin->byte.value());
   } else {
-    // codes -> left is 0, right is 1, Tree output -> 0 is not leaf, 1 + byte is leaf, push left first
-    std::stack<impl::huffman::huffman_node*> stack {
-      {std::to_address(tree_begin)}};    // start at root
-    while (!stack.empty()) {
-      auto node = stack.top();
-      stack.pop();
-
-      if (node->byte.has_value()) {
-        writer.write_bit<1>();
-        writer.write_byte(node->byte.value());
-
-        codes_by_byte[node->byte.value()] = node->code;
-      } else {
-        writer.write_bit<0>();
-
-        node->left->code        = node->code;
-        node->left->code.bits <<= 1;
-        node->left->code.bits.set(0, false);
-        node->left->code.count += 1;
-        stack.push(node->left);
-
-        node->right->code        = node->code;
-        node->right->code.bits <<= 1;
-        node->right->code.bits.set(0, true);
-        node->right->code.count += 1;
-        stack.push(node->right);
-      }
-    }
+    // codes -> left is 0, right is 1
+    // Tree output -> 0 is not leaf, 1 + byte is leaf, left first dfs
+    impl::huffman::encode_node(std::to_address(tree_begin),
+                               writer,
+                               codes_by_byte,
+                               {.bits = 0, .count = 0});
   }
 
   // Msg output
@@ -233,86 +252,53 @@ std::vector<uint8_t> encode(Itr begin, Itr end) {
   }
 
   // Pad bits output
-  const uint8_t pad_bits = 8 - writer.count_bits_in_buffer();
-  compressed[0]          = pad_bits;
   writer.flush();
-
-  return compressed;
 }
 
-template<typename Itr>
-requires std::is_same_v<typename Itr::value_type, uint8_t> &&
-         std::random_access_iterator<Itr>
-std::vector<uint8_t> decode(Itr begin, Itr end) {
+template<typename ItrIn, typename ItrOut>
+requires((std::input_iterator<ItrIn> &&
+          std::is_same_v<typename ItrIn::value_type, uint8_t>) ||
+         std::is_same_v<std::remove_cvref_t<std::remove_pointer_t<ItrIn>>,
+                        uint8_t>) &&
+        (std::output_iterator<ItrOut, uint8_t> ||
+         std::is_same_v<std::remove_cvref_t<std::remove_pointer_t<ItrOut>>,
+                        uint8_t>)
+void decode(ItrIn begin, ItrIn end, ItrOut out) {
   std::array<impl::huffman::huffman_decode_node, 256 * 2 - 1>
   tree;    // size is num of huffman nodes for max symbols, this holds lifetimes of nodes
 
   const auto tree_begin = tree.begin();
   auto       tree_end   = tree.begin();
 
-  impl::huffman::bit_reader reader {begin + 1};
-  const size_t bits_to_read = (std::distance(begin + 1, end) * 8) - *begin;
-  size_t       bits_read    = 0;
+  impl::huffman::bit_reader reader {begin};
 
-  if (reader.read_bit() == 1) {    // corner case for single byte repeated
-    return std::vector(bits_to_read - 9, reader.read_byte());
-  }
-  bits_read += 1;
-
-  *tree_end++ = {
-    .left  = nullptr,
-    .right = nullptr,
-    .byte  = std::nullopt,
-  };
-
-  std::stack<impl::huffman::huffman_decode_node*> stack {
-    {std::to_address(tree_begin)}};
-  while (!stack.empty()) {
-    auto* node = stack.top();
-    stack.pop();
-
-    if (reader.read_bit() == 1) {
-      node->byte  = reader.read_byte();
-      bits_read  += 9;
-    } else {
-      bits_read += 1;
-
-      *tree_end++ = impl::huffman::huffman_decode_node {
-        .left  = nullptr,
-        .right = nullptr,
-        .byte  = std::nullopt,
-      };
-      stack.push(std::to_address(tree_end - 1));
-      node->left = std::to_address(tree_end - 1);
-
-      *tree_end++ = impl::huffman::huffman_decode_node {
-        .left  = nullptr,
-        .right = nullptr,
-        .byte  = std::nullopt,
-      };
-      stack.push(std::to_address(tree_end - 1));
-      node->right = std::to_address(tree_end - 1);
+  auto* root = impl::huffman::decode_node(tree_end, reader);
+  if (std::distance(tree_begin, tree_end) ==
+      1) {    // corner case for single byte repeated
+    const auto byte = root->byte.value();
+    while (reader.get_iterator() != end) {
+      if (reader.read_bit() == 1) {
+        *out++ = byte;
+      }
     }
   }
 
-  std::vector<uint8_t> decompressed;
-
-  while (bits_read + 1 < bits_to_read) {
-    auto* node = std::to_address(tree_begin);
-
-    while (!node->byte.has_value()) {
+  auto* node = root;
+  while (reader.get_iterator() != end) {
+    while (node != nullptr && reader.get_iterator() != end &&
+           !node->byte.has_value()) {
       if (reader.read_bit() == 0) {
         node = node->left;
       } else {
         node = node->right;
       }
-      bits_read += 1;
     }
 
-    decompressed.emplace_back(node->byte.value());
+    if (node != nullptr && node->byte.has_value()) {
+      *out++ = node->byte.value();
+      node   = root;
+    }
   }
-
-  return decompressed;
 }
 
 }    // namespace huffman
