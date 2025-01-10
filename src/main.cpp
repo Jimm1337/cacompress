@@ -106,11 +106,13 @@ void soca_2itr_visual(std::array<uint8_t, size> arr, uint8_t rule, int itr) {
     height_pos += 10;
     display_array(arr_newer, height_pos);
     height_pos += 10;
-    soca::forward(arr.begin(), arr.end(), rule);
+    soca::forward_front(arr.begin(), arr.end(), rule);
+    soca::forward_back(arr.begin(), arr.end(), rule);
   }
 
   for (int i = itr / 2; i < itr; ++i) {
-    soca::reverse(arr.begin(), arr.end(), rule);
+    soca::reverse_back(arr.begin(), arr.end(), rule);
+    soca::reverse_front(arr.begin(), arr.end(), rule);
     std::array<uint8_t, size / 2> arr_older {};
     std::array<uint8_t, size / 2> arr_newer {};
     std::copy(arr.begin(), arr.begin() + size / 2, arr_older.begin());
@@ -171,7 +173,8 @@ template<size_t size>
 long long measure(std::array<uint8_t, size> arr, int itr) {
   const auto start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < itr; ++i) {
-    soca::forward<113>(arr.begin(), arr.end());
+    soca::forward_front<113>(arr.begin(), arr.end());
+    soca::forward_back<113>(arr.begin(), arr.end());
   }
   const auto end = std::chrono::high_resolution_clock::now();
   const auto duration =
