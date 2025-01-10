@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <bitset>
 #include <compare>
 #include <cstddef>
@@ -36,13 +37,13 @@ public:
   template<uint8_t val>
   requires(val == 0 || val == 1)
   constexpr void write_bit() {
-    if (count == 8) {
-      flush();
-    }
-
     buffer <<= 1;
     buffer  |= val;
     ++count;
+
+    if (count == 8) {
+      flush();
+    }
   }
 
   constexpr void write_code(code code) {
@@ -69,12 +70,11 @@ public:
   constexpr void flush() {
     buffer             <<= 8 - count;
     *output_iterator++   = buffer;
-
-    count  = 0;
-    buffer = 0;
+    buffer               = 0;
+    count                = 0;
   }
 
-  [[nodiscard]] constexpr uint8_t count_bits_in_buffer() const {
+  constexpr uint8_t count_bits_in_buffer() const {
     return count;
   }
 };
@@ -82,20 +82,25 @@ public:
 // MSB IS STILL MSB, bits flushed right
 template<typename Itr>
 class bit_reader {
-  Itr     input_iterator;
-  uint8_t count {0};
+  Itr     input_iterator_;
+  uint8_t buffer_ {0};
+  uint8_t count_ {8};
 
 public:
   constexpr explicit bit_reader(Itr input_iterator):
-    input_iterator(input_iterator) {
+    input_iterator_(input_iterator) {
   }
 
   constexpr uint8_t read_bit() {
-    const uint8_t bit = ((*input_iterator >> (7 - count++)) & 1);
+    if (count_ == 8) {
+      buffer_ = *input_iterator_;
+      count_  = 0;
+    }
 
-    if (count == 8) {
-      count = 0;
-      ++input_iterator;
+    const uint8_t bit = ((buffer_ >> (7 - count_++)) & 1u);
+
+    if (count_ == 8) {
+      ++input_iterator_;
     }
 
     return bit;
@@ -112,7 +117,11 @@ public:
   }
 
   constexpr Itr get_iterator() const {
-    return input_iterator;
+    return input_iterator_;
+  }
+
+  constexpr uint8_t bits_to_next_byte() const {
+    return 8 - count_;
   }
 };
 
@@ -133,29 +142,36 @@ struct huffman_decode_node {
   byte                 byte;
 };
 
-void encode_node(huffman_node* node, auto& writer, auto& table, code code) {
+void traverse_node(huffman_node* node, auto& table, code code) {
   if (node->byte.has_value()) {
-    writer.template write_bit<1>();
-    writer.write_byte(node->byte.value());
     table[node->byte.value()] = code;
   } else {
-    writer.template write_bit<0>();
+    traverse_node(
+    node->left,
+    table,
+    huffman::code {.bits  = code.bits << 1,
+                   .count = static_cast<uint8_t>(code.count + 1)});
 
-    encode_node(node->left,
-                writer,
-                table,
-                huffman::code {.bits  = code.bits << 1,
-                               .count = static_cast<uint8_t>(code.count + 1)});
-
-    encode_node(node->right,
-                writer,
-                table,
-                huffman::code {.bits = code.bits << 1 |= 1,
-                               .count = static_cast<uint8_t>(code.count + 1)});
+    traverse_node(
+    node->right,
+    table,
+    huffman::code {.bits = code.bits << 1 |= 1,
+                   .count = static_cast<uint8_t>(code.count + 1)});
   }
 }
 
-huffman_decode_node* decode_node(auto& itr, auto& reader) {
+void encode_tree(huffman_node* node, auto& writer) {
+  if (node->byte.has_value()) {
+    writer.template write_bit<1>();
+    writer.write_byte(node->byte.value());
+  } else {
+    writer.template write_bit<0>();
+    encode_tree(node->left, writer);
+    encode_tree(node->right, writer);
+  }
+}
+
+huffman_decode_node* decode_tree(auto& itr, auto& reader) {
   if (reader.read_bit() == 1) {
     *itr++ = huffman_decode_node {.left  = nullptr,
                                   .right = nullptr,
@@ -164,8 +180,8 @@ huffman_decode_node* decode_node(auto& itr, auto& reader) {
     return std::to_address(itr - 1);
   }
 
-  huffman_decode_node* left   = decode_node(itr, reader);
-  huffman_decode_node* right  = decode_node(itr, reader);
+  huffman_decode_node* left  = decode_tree(itr, reader);
+  huffman_decode_node* right = decode_tree(itr, reader);
 
   *itr++ =
   huffman_decode_node {.left = left, .right = right, .byte = std::nullopt};
@@ -192,12 +208,16 @@ void encode(ItrIn begin, ItrIn end, ItrOut out) {
   const auto tree_begin = tree.begin();
   auto       tree_end   = tree.begin();
 
+  size_t tree_bit_size = 0;
+
   // make leaf nodes
   std::array<std::optional<uint16_t>, 256> cache_idx {};
   for (auto itr = begin; itr != end; ++itr) {
     const uint8_t byte = *itr;
 
     if (!cache_idx[byte].has_value()) {
+      tree_bit_size += 10;
+
       cache_idx[byte] =
       static_cast<int16_t>(std::distance(tree.begin(), tree_end));
       *tree_end++ = {.frequency = 1,
@@ -207,6 +227,12 @@ void encode(ItrIn begin, ItrIn end, ItrOut out) {
     } else {
       ++tree[*cache_idx[byte]].frequency;
     }
+  }
+
+  --tree_bit_size;
+  std::array<size_t, 256> freq_by_byte {};
+  for (auto itr = tree_begin; itr != tree_end; ++itr) {
+    freq_by_byte[itr->byte.value()] = itr->frequency;
   }
 
   // make intermediate nodes
@@ -226,25 +252,35 @@ void encode(ItrIn begin, ItrIn end, ItrOut out) {
   }
 
   // Output format:
-  // (bits) tree -> (bits) msg -> (pad bits)
-
-  impl::huffman::bit_writer writer {out};
+  // (byte) pad bits count -> (bits) tree -> (bits) msg -> (bits) pad to byte
 
   std::array<impl::huffman::code, 256> codes_by_byte {};
 
   if (tree_begin->byte.has_value()) {    // corner case for single byte repeated
     codes_by_byte[tree_begin->byte.value()] = {.bits  = {1},
                                                .count = 1};    // 1 bit code
-    writer.template write_bit<1>();
-    writer.write_byte(tree_begin->byte.value());
   } else {
     // codes -> left is 0, right is 1
-    // Tree output -> 0 is not leaf, 1 + byte is leaf, left first dfs
-    impl::huffman::encode_node(std::to_address(tree_begin),
-                               writer,
-                               codes_by_byte,
-                               {.bits = 0, .count = 0});
+    impl::huffman::traverse_node(std::to_address(tree_begin),
+                                 codes_by_byte,
+                                 impl::huffman::code {.bits = {0}, .count = 0});
   }
+
+  impl::huffman::bit_writer writer {out};
+
+  // Pad bits count output
+  // 1 + tree_size + msg_size -> to be written, first bit is 1 for no pad and 0 for pad
+  size_t msg_bit_size = 0;
+  for (size_t i = 0; i < 256; ++i) {
+    msg_bit_size += codes_by_byte[i].count * freq_by_byte[i];
+  }
+
+  const uint8_t pad_bits = 8 - ((8 + tree_bit_size + msg_bit_size) % 8);
+
+  writer.write_byte(pad_bits);
+
+  // Tree output
+  impl::huffman::encode_tree(std::to_address(tree_begin), writer);
 
   // Msg output
   for (auto itr = begin; itr != end; ++itr) {
@@ -252,11 +288,13 @@ void encode(ItrIn begin, ItrIn end, ItrOut out) {
   }
 
   // Pad bits output
-  writer.flush();
+  if (pad_bits != 0) {
+    writer.flush();
+  }
 }
 
 template<typename ItrIn, typename ItrOut>
-requires((std::input_iterator<ItrIn> &&
+requires((std::forward_iterator<ItrIn> &&
           std::is_same_v<typename ItrIn::value_type, uint8_t>) ||
          std::is_same_v<std::remove_cvref_t<std::remove_pointer_t<ItrIn>>,
                         uint8_t>) &&
@@ -267,37 +305,44 @@ void decode(ItrIn begin, ItrIn end, ItrOut out) {
   std::array<impl::huffman::huffman_decode_node, 256 * 2 - 1>
   tree;    // size is num of huffman nodes for max symbols, this holds lifetimes of nodes
 
-  const auto tree_begin = tree.begin();
-  auto       tree_end   = tree.begin();
+  const size_t bits_to_read =
+  (std::distance(std::next(begin), end) * 8) - *begin;
+  size_t bits_read = 0;
 
-  impl::huffman::bit_reader reader {begin};
+  impl::huffman::bit_reader reader {std::next(begin)};
 
-  auto* root = impl::huffman::decode_node(tree_end, reader);
-  if (std::distance(tree_begin, tree_end) ==
-      1) {    // corner case for single byte repeated
-    const auto byte = root->byte.value();
-    while (reader.get_iterator() != end) {
-      if (reader.read_bit() == 1) {
-        *out++ = byte;
-      }
+  auto                                tree_space_itr = tree.begin();
+  impl::huffman::huffman_decode_node* root =
+  impl::huffman::decode_tree(tree_space_itr, reader);
+
+  // Tree bit size calculation
+  for (const auto& node : tree) {
+    if (node.byte.has_value()) {
+      bits_read += 10;
+    }
+  }
+  --bits_read;
+
+  // Corner case for single byte repeated
+  if (root->byte.has_value()) {
+    while (bits_read++ < bits_to_read) {
+      *out++ = root->byte.value();
     }
   }
 
-  auto* node = root;
-  while (reader.get_iterator() != end) {
-    while (node != nullptr && reader.get_iterator() != end &&
-           !node->byte.has_value()) {
-      if (reader.read_bit() == 0) {
-        node = node->left;
-      } else {
+  impl::huffman::huffman_decode_node* node = root;
+  while (bits_read < bits_to_read) {
+    while (!node->byte.has_value()) {
+      if (reader.read_bit() == 1) {
         node = node->right;
+      } else {
+        node = node->left;
       }
+      ++bits_read;
     }
 
-    if (node != nullptr && node->byte.has_value()) {
-      *out++ = node->byte.value();
-      node   = root;
-    }
+    *out++ = node->byte.value();
+    node   = root;
   }
 }
 

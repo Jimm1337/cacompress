@@ -181,67 +181,71 @@ long long measure(std::array<uint8_t, size> arr, int itr) {
 }
 
 int main() {
-  // constexpr static size_t itr = 50;
-  //
-  // InitWindow(1280, 1000, "SOCA Triple: 0");
-  //
-  // SetTargetFPS(120);
-  //
-  // static constexpr auto input_byte_size = 256 / 8;
-  //
-  // const auto arr = create_array<input_byte_size>();
-  //
-  // const auto duration = measure(create_array<8 * 1024>(), 3); // 100MB in 1s - 8k, 3itr
+#if 1
+  constexpr auto rule = 220;
 
-  const auto           huffman_arr = create_array<32 * 1024>();
-  std::vector<uint8_t> huffman_compressed {};
-  std::vector<uint8_t> huffman_decompressed {};
+  const auto huffman_arr  = create_array<256>();
+
+  std::vector<uint8_t> huffman_compressed_0 {};
   huffman::encode(huffman_arr.begin(),
-                  huffman_arr.end(),
-                  std::back_inserter(huffman_compressed));
-  huffman::decode(huffman_compressed.begin(),
-                  huffman_compressed.end(),
-                  std::back_inserter(huffman_decompressed));
+                huffman_arr.end(),
+                std::back_inserter(huffman_compressed_0));
 
-  if (!verify_array(huffman_arr, huffman_decompressed)) {
+  std::vector<uint8_t> huffman_decompressed_0 {};
+  huffman::decode(huffman_compressed_0.begin(),
+                huffman_compressed_0.end(),
+                std::back_inserter(huffman_decompressed_0));
+
+
+  if (!verify_array(huffman_arr, huffman_decompressed_0)) {
     fmt::println("Huffman decompression failed");
   } else {
     fmt::println("Huffman decompression success");
   }
 
   fmt::println("Original size: {}", huffman_arr.size());
-  fmt::println("Compressed size: {}", huffman_compressed.size());
-  fmt::println("Decompressed size: {}", huffman_decompressed.size());
+  fmt::println("Compressed size: {}", huffman_compressed_0.size());
+  fmt::println("Decompressed size: {}", huffman_decompressed_0.size());
+#endif
 
-  // fmt::println("SOCA_time: {}us", duration);
-  //
-  // uint8_t rule = 0;
-  //
-  // while (!WindowShouldClose()) {
-  //   BeginDrawing();
-  //
-  //   ClearBackground(WHITE);
-  //
-  //   if (IsKeyPressed(KEY_LEFT)) {
-  //     if (rule != 0) {
-  //       --rule;
-  //       SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
-  //     }
-  //   }
-  //
-  //   if (IsKeyPressed(KEY_RIGHT)) {
-  //     if (rule != 255) {
-  //       ++rule;
-  //       SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
-  //     }
-  //   }
-  //
-  //   soca_2itr_visual(arr, rule, itr);
-  //
-  //   EndDrawing();
-  // }
-  //
-  // CloseWindow();
+#if 0
+  constexpr static size_t itr = 50;
 
+  InitWindow(1280, 1000, "SOCA Triple: 0");
+
+  SetTargetFPS(120);
+
+  static constexpr auto input_byte_size = 256 / 8;
+
+  const auto arr = create_array<input_byte_size>();
+
+  uint8_t rule = 0;
+
+  while (!WindowShouldClose()) {
+    BeginDrawing();
+
+    ClearBackground(WHITE);
+
+    if (IsKeyPressed(KEY_LEFT)) {
+      if (rule != 0) {
+        --rule;
+        SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
+      }
+    }
+
+    if (IsKeyPressed(KEY_RIGHT)) {
+      if (rule != 255) {
+        ++rule;
+        SetWindowTitle(fmt::format("SOCA Triple: {}", rule).c_str());
+      }
+    }
+
+    soca_2itr_visual(arr, rule, itr);
+
+    EndDrawing();
+  }
+
+  CloseWindow();
+#endif
   return 0;
 }
