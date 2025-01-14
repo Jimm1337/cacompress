@@ -1,5 +1,7 @@
+#include "COMPRESS.hpp"
 #include "HUFFMAN.hpp"
 #include "SOCA.hpp"
+#include "UTIL.hpp"
 #include <fmt/core.h>
 
 #include <algorithm>
@@ -185,30 +187,31 @@ long long measure(std::array<uint8_t, size> arr, int itr) {
 
 int main() {
 #if 1
-  constexpr auto rule = 220;
+  constexpr auto data_size    = 256;
+  constexpr auto rule         = 220;
+  constexpr auto section_size = 40;
 
-  const auto huffman_arr  = create_array<256>();
+  auto random_arr = create_array<data_size>();
 
-  std::vector<uint8_t> huffman_compressed_0 {};
-  huffman::encode(huffman_arr.begin(),
-                huffman_arr.end(),
-                std::back_inserter(huffman_compressed_0));
+  std::vector<uint8_t> compressed {};
+  compress<rule, section_size>(random_arr.begin(),
+                               random_arr.end(),
+                               std::back_inserter(compressed));
 
-  std::vector<uint8_t> huffman_decompressed_0 {};
-  huffman::decode(huffman_compressed_0.begin(),
-                huffman_compressed_0.end(),
-                std::back_inserter(huffman_decompressed_0));
+  std::vector<uint8_t> decompressed {};
+  decompress<rule, section_size>(compressed.begin(),
+                                 compressed.end(),
+                                 std::back_inserter(decompressed));
 
-
-  if (!verify_array(huffman_arr, huffman_decompressed_0)) {
-    fmt::println("Huffman decompression failed");
+  if (!verify_array(random_arr, decompressed)) {
+    fmt::println("decompression failed");
   } else {
-    fmt::println("Huffman decompression success");
+    fmt::println("decompression success");
   }
 
-  fmt::println("Original size: {}", huffman_arr.size());
-  fmt::println("Compressed size: {}", huffman_compressed_0.size());
-  fmt::println("Decompressed size: {}", huffman_decompressed_0.size());
+  fmt::println("Original size: {}", random_arr.size());
+  fmt::println("Compressed size: {}", compressed.size());
+  fmt::println("Decompressed size: {}", decompressed.size());
 #endif
 
 #if 0

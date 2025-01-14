@@ -1,5 +1,7 @@
 #pragma once
 
+#include "UTIL.hpp"
+
 #include <array>
 #include <bitset>
 #include <compare>
@@ -22,109 +24,6 @@ struct code {
 
 using byte = std::optional<uint8_t>;
 
-// FIRST ADDED IS MSB
-template<typename Itr>
-class bit_writer {
-  Itr     output_iterator;
-  uint8_t buffer {0};
-  uint8_t count {0};
-
-public:
-  constexpr explicit bit_writer(Itr output_iterator):
-    output_iterator(output_iterator) {
-  }
-
-  template<uint8_t val>
-  requires(val == 0 || val == 1)
-  constexpr void write_bit() {
-    buffer <<= 1;
-    buffer  |= val;
-    ++count;
-
-    if (count == 8) {
-      flush();
-    }
-  }
-
-  constexpr void write_code(code code) {
-    for (int bit = code.count - 1; bit >= 0; --bit) {
-      if (code.bits.test(bit)) {
-        write_bit<1>();
-      } else {
-        write_bit<0>();
-      }
-    }
-  }
-
-  constexpr void write_byte(uint8_t byte) {
-    const std::bitset<8> bits {byte};
-    for (int bit = 7; bit >= 0; --bit) {
-      if (bits.test(bit)) {
-        write_bit<1>();
-      } else {
-        write_bit<0>();
-      }
-    }
-  }
-
-  constexpr void flush() {
-    buffer             <<= 8 - count;
-    *output_iterator++   = buffer;
-    buffer               = 0;
-    count                = 0;
-  }
-
-  constexpr uint8_t count_bits_in_buffer() const {
-    return count;
-  }
-};
-
-// MSB IS STILL MSB, bits flushed right
-template<typename Itr>
-class bit_reader {
-  Itr     input_iterator_;
-  uint8_t buffer_ {0};
-  uint8_t count_ {8};
-
-public:
-  constexpr explicit bit_reader(Itr input_iterator):
-    input_iterator_(input_iterator) {
-  }
-
-  constexpr uint8_t read_bit() {
-    if (count_ == 8) {
-      buffer_ = *input_iterator_;
-      count_  = 0;
-    }
-
-    const uint8_t bit = ((buffer_ >> (7 - count_++)) & 1u);
-
-    if (count_ == 8) {
-      ++input_iterator_;
-    }
-
-    return bit;
-  }
-
-  constexpr uint8_t read_byte() {
-    uint8_t result = 0;
-
-    for (int bit = 7; bit >= 0; --bit) {
-      result |= read_bit() << bit;
-    }
-
-    return result;
-  }
-
-  constexpr Itr get_iterator() const {
-    return input_iterator_;
-  }
-
-  constexpr uint8_t bits_to_next_byte() const {
-    return 8 - count_;
-  }
-};
-
 struct huffman_node {
   size_t        frequency;
   huffman_node* left;
@@ -141,6 +40,17 @@ struct huffman_decode_node {
   huffman_decode_node* right;
   byte                 byte;
 };
+
+template<typename Itr>
+constexpr void write_code(util::bit_writer<Itr>& writer, code code) {
+  for (int bit = code.count - 1; bit >= 0; --bit) {
+    if (code.bits.test(bit)) {
+      writer.template write_bit<1>();
+    } else {
+      writer.template write_bit<0>();
+    }
+  }
+}
 
 void traverse_node(huffman_node* node, auto& table, code code) {
   if (node->byte.has_value()) {
@@ -194,13 +104,8 @@ huffman_decode_node* decode_tree(auto& itr, auto& reader) {
 namespace huffman {
 
 template<typename ItrIn, typename ItrOut>
-requires((std::forward_iterator<ItrIn> &&
-          std::is_same_v<typename ItrIn::value_type, uint8_t>) ||
-         std::is_same_v<std::remove_cvref_t<std::remove_pointer_t<ItrIn>>,
-                        uint8_t>) &&
-        (std::output_iterator<ItrOut, uint8_t> ||
-         std::is_same_v<std::remove_cvref_t<std::remove_pointer_t<ItrOut>>,
-                        uint8_t>)
+requires std::forward_iterator<ItrIn> &&
+         std::output_iterator<ItrOut, uint8_t>
 void encode(ItrIn begin, ItrIn end, ItrOut out) {
   std::array<impl::huffman::huffman_node, 256 * 2 - 1>
   tree;    // size is num of huffman nodes for max symbols, this holds lifetimes of nodes
@@ -266,7 +171,7 @@ void encode(ItrIn begin, ItrIn end, ItrOut out) {
                                  impl::huffman::code {.bits = {0}, .count = 0});
   }
 
-  impl::huffman::bit_writer writer {out};
+  util::bit_writer writer {out};
 
   // Pad bits count output
   // 1 + tree_size + msg_size -> to be written, first bit is 1 for no pad and 0 for pad
@@ -284,7 +189,7 @@ void encode(ItrIn begin, ItrIn end, ItrOut out) {
 
   // Msg output
   for (auto itr = begin; itr != end; ++itr) {
-    writer.write_code(codes_by_byte[*itr]);
+    impl::huffman::write_code(writer, codes_by_byte[*itr]);
   }
 
   // Pad bits output
@@ -294,13 +199,8 @@ void encode(ItrIn begin, ItrIn end, ItrOut out) {
 }
 
 template<typename ItrIn, typename ItrOut>
-requires((std::forward_iterator<ItrIn> &&
-          std::is_same_v<typename ItrIn::value_type, uint8_t>) ||
-         std::is_same_v<std::remove_cvref_t<std::remove_pointer_t<ItrIn>>,
-                        uint8_t>) &&
-        (std::output_iterator<ItrOut, uint8_t> ||
-         std::is_same_v<std::remove_cvref_t<std::remove_pointer_t<ItrOut>>,
-                        uint8_t>)
+requires std::random_access_iterator<ItrIn> &&
+         std::output_iterator<ItrOut, uint8_t>
 void decode(ItrIn begin, ItrIn end, ItrOut out) {
   std::array<impl::huffman::huffman_decode_node, 256 * 2 - 1>
   tree;    // size is num of huffman nodes for max symbols, this holds lifetimes of nodes
@@ -309,7 +209,7 @@ void decode(ItrIn begin, ItrIn end, ItrOut out) {
   (std::distance(std::next(begin), end) * 8) - *begin;
   size_t bits_read = 0;
 
-  impl::huffman::bit_reader reader {std::next(begin)};
+  util::bit_reader reader {std::next(begin)};
 
   auto                                tree_space_itr = tree.begin();
   impl::huffman::huffman_decode_node* root =
